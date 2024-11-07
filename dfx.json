@@ -1,0 +1,21 @@
+{
+  "canisters": {
+    "example": {
+      "type": "motoko",
+      "main": "src/example.mo",
+      "gzip": true,
+      "declarations": {
+        "node_compatibility": true
+      }
+    }
+  },
+  "defaults": {
+    "build": {
+      "gzip": true,
+      "zip": true,
+      "packtool": "mops sources"
+    }
+  },
+  "output_env_file": ".env",
+  "version": 2
+}

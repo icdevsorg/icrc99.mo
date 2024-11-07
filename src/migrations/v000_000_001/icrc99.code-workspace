@@ -1,0 +1,26 @@
+{
+	"folders": [
+    {
+      "path": "../../../../icrc99-orchestrator"
+    },
+    {
+      "path": "../../.."
+    },
+    {
+      "path": "../../../../ClassPlus"
+    },
+    {
+      "path": "../../../../../../PanIndustrial/code/icrc7.mo"
+    },
+    {
+      "path": "../../../../../../PanIndustrial/code/icrc3.mo"
+    },
+    {
+      "path": "../../../../../../PanIndustrial/code/icrc37.mo"
+    },
+    {
+      "path": "../../../../../../PanIndustrial/code/timerTool"
+    }
+  ],
+  "settings": {}
+}
