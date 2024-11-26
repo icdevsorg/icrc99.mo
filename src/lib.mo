@@ -16,6 +16,7 @@ import Text "mo:base/Text";
 
 
 import BTree "mo:stableheapbtreemap/BTree";
+import {URLEncoding} "mo:encoding/Base64";
 
 import Service "service";
 import CLService "cycleLedger";
@@ -449,6 +450,40 @@ module {
           continue proc;
         };
 
+        let ?nft = environment.icrc7.get_nft(thisItem.tokenId) else{
+           results.add(?#Err(#NotFound));
+           continue proc;
+        };
+
+        let defaultUri = "https://" # Principal.toText(canisterId) # ".raw.ic0.app" # "/---/icrc59/-/" # Nat.toText(thisItem.tokenId) # "/metadata?mode=json";
+
+        let uri = switch(nft.meta){
+          case(#Map(val)){
+            if(Map.size(val) > 0){
+              switch(Map.get(val, Map.thash, "icrc97:metadata")){
+                case(?#Text(val))val;
+                case(?#Blob(val)) switch(Text.decodeUtf8(Blob.fromArray(URLEncoding.encode(Blob.toArray(val))))){
+                  case(?val) val;
+                  case(null) defaultUri;
+                };
+                case(_){
+                  defaultUri
+                }
+              };
+            } else defaultUri;
+            
+          };
+          case(#Text(val)) val;
+          case(#Blob(val)) {
+            switch(Text.decodeUtf8(Blob.fromArray(URLEncoding.encode(Blob.toArray(val))))){
+                case(?val) val;
+                case(null) defaultUri;
+            };
+          };
+          case(_) defaultUri
+        };
+        
+
         let currentOwner = {owner = caller; subaccount = thisItem.fromSubaccount};
 
         if(ICRC7.ahash.1(owner, currentOwner) == false){
@@ -477,6 +512,7 @@ module {
           originalRequest = thisItem;
           nativeChain = state.nativeChain;
           originalMinter = originalMinter;
+          uri = uri;
           var includedCycles = balance/requests.size();
           var usedCycles = 0;
           startTime = getTime();
@@ -534,6 +570,7 @@ module {
           
           castState.originalRequest
           with originalMinterAccount = ?castState.originalMinter;
+          uri = castState.uri;
           originalCaller : Service.Account = {
             owner = castState.originalCaller;
             subaccount = castState.originalRequest.fromSubaccount

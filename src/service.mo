@@ -84,6 +84,7 @@ public type OrchestratorCastRequest = {
   tokenId: Nat;
   originalCaller: Account;
   originalMinterAccount: ?Account;
+  uri: Text;
   nativeContract: RemoteContractPointer;
   remoteContract: RemoteContractPointer;
   targetOwner: Text;

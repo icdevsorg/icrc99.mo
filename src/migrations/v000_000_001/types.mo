@@ -39,6 +39,7 @@ module {
     nativeChain: RemoteContractPointer;
     originalMinter: Account;
     originalCaller: Principal;
+    uri: Text;
     var includedCycles : Nat;
     var usedCycles : Nat;
     startTime: Nat;
