@@ -18,8 +18,10 @@ module {
     #Unauthorized;
     #RPC: {
       #Ethereum : EVM_RPC.RpcError;
+      #EthereumMultiSend: EVM_RPC.MultiSendRawTransactionResult;
     };
     #NetworkRCPNotFound;
+    #NoCkNFTCanister;
     #InsufficientAllowance : (Nat, Nat);
     #InsufficientBalance : (Nat, Nat);
     #InsufficientCycles: (Nat, Nat);
@@ -37,6 +39,11 @@ module {
     network: Network;
     contract: Text;
     tokenId: Nat;
+  };
+
+  public type ContractPointer = {
+    network: Network;
+    contract: Text;
   };
 
   public type SolonaRPCService = {
@@ -104,18 +111,104 @@ module {
     subaccount: ?Blob;
   };
 
-  public type RemoteContractPointer = {
-    network: Network;
-    contract: Text;
-  };  
+  public type ApprovalAddressRequest = {
+    account: Account;
+    remoteNFTPointer: RemoteNFTPointer;
+  };
 
+
+  public type MintRequestId = Nat;
+
+  public type MintResult = {
+    #Ok: MintRequestId;
+    #Err: MintError;
+  };
+
+  public type MintError = RemoteError or {
+    #InvalidRemoteNFTPointer;
+    #InvalidAccount;
+    #InvalidSpender;
+    #InvalidResumeOption;
+    #InvalidMintRequestId;
+    #InvalidMintStatus;
+    #InvalidMintRequest;
+    #NoCkNFTCanister;
+  };
+
+  public type MintStatus = {
+    #Transferring;
+    #CheckingOwner: {
+      retries: Nat;
+      nextQuery: Nat;
+    };
+    #RetrievingMetadata: {
+      retries: Nat;
+      nextQuery: Nat;
+    };
+    #Minting;
+    #Complete: {
+      mintTrx: Nat;
+      approvalTrx: ?Nat;
+      approvalError: ?Text;
+    };
+    #Err : {
+      #InvalidTransfer : Text; //Error from RPC
+      #OwnershipNotVerified : {
+        #InvalidOwner;
+        #TooManyRetries: Nat;
+        #RemoteError: RemoteError;
+      };
+      #InvalidMetadata: Text;
+      #MetadataError: Text;
+      #MintError: Text;
+      #ApprovalError: Text;
+      #GenericError: Text;
+    };
+    
+  };
+
+  public type MintResumeOption = {
+    #StartOwnershipVerification;
+    #StartMetadataTransfer;
+    #StartMint;
+  };
+
+  public type MintRequest = {
+    nft: RemoteNFTPointer;
+    maxBytes: Nat;
+    mintToAccount: Account;
+    spender: ?Account;
+    resume: ?(Nat, MintResumeOption)
+  };
+
+  public type  CreateCanisterResponse = {
+    #Ok: Principal;
+    #Err: CreateCanisterError;
+  };
+
+    public type  CreateRemoteResponse = {
+    #Ok: Nat;
+    #Err: CreateRemoteError;
+  };
+
+  public type CreateCanisterError = RemoteError;
+  public type CreateRemoteError = RemoteError;
+
+  public type CanisterDefaults =  {
+   symbol: ?Text;
+   name: ?Text;
+   description: ?Text;
+   logo: ?Text;
+   
+  };
   public type CastRequest = {
     castId: Nat;
     tokenId: Nat;
+    uri: Text;
     originalCaller: Account;
     originalMinterAccount: ?Account;
-    nativeContract: RemoteContractPointer;
-    remoteContract: RemoteContractPointer;
+    nativeContract: ContractPointer;
+    remoteContract: ContractPointer;
     targetOwner: Text;
     memo: ?Blob;
     created_at_time: ?Nat;
@@ -128,8 +221,6 @@ public type CastResult = {
   #Ok : Nat;
   #Err : CastError;
 };
-
-// Representation of errors during the casting process
 public type CastStatus = {
     #Created; //timestamp
     #SubmittingToOrchestrator: Nat; //timestamp
@@ -182,6 +273,13 @@ public type CastError = {
   public type Service = actor {
     get_remote_owner : ([RemoteNFTPointer]) -> async [?GetCallResult];
     get_remote_meta : ([RemoteNFTPointer]) -> async [?GetCallResult];
+    get_approval_address:  (ApprovalAddressRequest, ?Account) -> async ?Text; //not a query because it may require a call to the tecds chain
+    get_ck_nft_canister: query ([ContractPointer]) -> async [?Principal];
+    get_creation_cost: (ContractPointer) -> async Nat;
+    create_canister: (ContractPointer, CanisterDefaults, Account) -> async CreateCanisterResponse;
+    mint: (mintRequest: MintRequest,  account: ?Account) -> async MintResult;
+    create_remote : (ContractPointer, Network, account: ?Account) -> async CreateRemoteResponse;
+    get_mint_status: ([Nat]) -> async [?MintStatus];
     cast : (CastRequest) -> async CastResult;
   };
 

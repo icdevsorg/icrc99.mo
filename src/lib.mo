@@ -52,6 +52,7 @@ module {
   public type CastRequest =                   Service.CastRequest;
   public type CastResult =                    Service.CastResult;
   public type CastStatus =                    Service.CastStatus;
+  public type CastStateShared =              Service.CastStateShared;
   public type CastCostRequest =               Service.CastCostRequest;
   public type RemoteTokenCost =               Service.RemoteTokenCost;
   public type CastState =                     MigrationTypes.Current.CastState;
@@ -457,10 +458,13 @@ module {
 
         let defaultUri = "https://" # Principal.toText(canisterId) # ".raw.ic0.app" # "/---/icrc59/-/" # Nat.toText(thisItem.tokenId) # "/metadata?mode=json";
 
+
+        debug if(debug_channel.announce) D.print(debug_show("NFT: " # debug_show(nft.meta)));
+
         let uri = switch(nft.meta){
           case(#Map(val)){
             if(Map.size(val) > 0){
-              switch(Map.get(val, Map.thash, "icrc97:metadata")){
+              switch(Map.get(val, Map.thash, "icrc97:external_metadata")){
                 case(?#Text(val))val;
                 case(?#Blob(val)) switch(Text.decodeUtf8(Blob.fromArray(URLEncoding.encode(Blob.toArray(val))))){
                   case(?val) val;
@@ -575,8 +579,8 @@ module {
             owner = castState.originalCaller;
             subaccount = castState.originalRequest.fromSubaccount
           };
-          nativeContract : OrchestratorService.RemoteContractPointer = castState.nativeChain;
-          remoteContract : OrchestratorService.RemoteContractPointer = castState.originalRequest.remoteContract;
+          nativeContract : OrchestratorService.ContractPointer = castState.nativeChain;
+          remoteContract : OrchestratorService.ContractPointer = castState.originalRequest.remoteContract;
           castId = castState.castId;
         } : OrchestratorService.CastRequest);
         switch(result){
@@ -610,6 +614,20 @@ module {
         
     };
 
+    public func cast_status(caller: Principal, castIds: [Nat]) : async* [?CastStateShared] {
+
+      let results = Buffer.Buffer<?CastStateShared>(castIds.size());
+      label proc for(thisCastStatusId in castIds.vals()){
+        let ?castState = BTree.get(state.castStates, Nat.compare, thisCastStatusId) else {
+          results.add(null);
+          continue proc;
+        };
+        results.add(?MigrationTypes.Current.castStateToShared(castState));
+      };
+     
+     return Buffer.toArray(results);
+    };
+
    
     public func update_cast_status(caller: Principal, castId: Nat, castStatus: CastStatus) : async* Result.Result<(), Text> {
 
@@ -641,7 +659,14 @@ module {
             await* burnCompletedCast(castId);
           };
         };
-        case(#Completed(val)){};
+        case(#Completed(val)){
+          let remoteOwner : RemoteOwner = #remote({
+            contract = castState.originalRequest.remoteContract;
+            owner = castState.originalRequest.targetOwner;
+            timestamp = Int.abs(Time.now());
+          });
+          ignore BTree.insert(state.remoteOwnerMap, Nat.compare, castState.originalRequest.tokenId, remoteOwner);
+        };
         case(#Error(val)){
           debug if(debug_channel.announce) D.print(debug_show("Error handled...trying rollback update_cast_status: " # debug_show(val)));
           let result =  environment.icrc7.update_token_owner(castState.originalRequest.tokenId, ?lockAccount, {owner = castState.originalCaller; subaccount = castState.originalRequest.fromSubaccount});
@@ -653,6 +678,7 @@ module {
       };
 
       updateCastStatus(castState, castStatus);
+
       return #ok(());
     };
 

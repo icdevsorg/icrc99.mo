@@ -121,7 +121,7 @@ public type RemoteOwnershipUpdateError = {
 
 public type CastStateShared = {
   castId: Nat;
-  originalRequest: OrchestratorCastRequest;
+  originalRequest: CastRequest;
   startTime: Nat;
   status: CastStatus;
   history: [(CastStatus, Nat)]; //status, timestamp

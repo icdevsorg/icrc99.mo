@@ -29,6 +29,7 @@ module {
   //public type FusionRPCService =      Service.FusionRPCService;
   public type Network =               Service.Network;
   public type CastRequest =           Service.CastRequest;
+  public type OrchestratorCastRequest =           Service.OrchestratorCastRequest;
 
   public type Account =             Service.Account;
 
@@ -45,6 +46,18 @@ module {
     startTime: Nat;
     var status: CastStatus;
     history: Vector.Vector<(CastStatus, Nat)>; //status, timestamp
+  };
+
+  public type CastStateShared = Service.CastStateShared;
+
+  public func castStateToShared(x: CastState): CastStateShared {
+    {
+      castId = x.castId;
+      originalRequest = x.originalRequest;
+      startTime = x.startTime;
+      status = x.status;
+      history = Vector.toArray(x.history);
+    }
   };
 
   /// A map that matches A Network with a set of Fusion RPC Services.
