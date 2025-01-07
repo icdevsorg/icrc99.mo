@@ -23,7 +23,7 @@ import {URLEncoding} "mo:encoding/Base64";
 import Service "service";
 import CLService "cycleLedger";
 import OrchestratorService "orchestratorService";
-import ClassPlusLib "../../ClassPlus/src/";
+import ClassPlusLib "mo:class-plus";
 import ICRC7 "mo:icrc7-mo";
 
 module {
