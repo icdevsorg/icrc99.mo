@@ -214,15 +214,7 @@ module {
     contractAddress : ?Text;
     gasUsed : Nat;
   };
-  public type UpdateProviderArgs = {
-    cyclesPerCall : ?Nat64;
-    credentialPath : ?Text;
-    hostname : ?Text;
-    credentialHeaders : ?[HttpHeader];
-    primary : ?Bool;
-    cyclesPerMessageByte : ?Nat64;
-    providerId : Nat64;
-  };
+  public type UpdateAPIArgs = [(Nat,?Text)];
   public type ValidationError = {
     #CredentialPathNotAllowed;
     #HostNotAllowed : Text;
@@ -288,7 +280,7 @@ module {
       ) -> async RequestCostResult;
     setOpenRpcAccess : shared Bool -> async ();
     unregisterProvider : shared ProviderId -> async Bool;
-    updateProvider : shared UpdateProviderArgs -> async ();
+    updateApiKeys : shared UpdateAPIArgs -> async ();
     withdrawAccumulatedCycles : shared (ProviderId, Principal) -> async ();
   }
 }

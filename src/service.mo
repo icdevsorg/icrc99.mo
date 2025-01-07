@@ -77,6 +77,7 @@ public type CastRequest = {
   created_at_time: ?Nat;
   gasPrice: ?Nat;
   gasLimit: ?Nat;
+  maxPriorityFeePerGas: ?Nat;
 };
 
 public type OrchestratorCastRequest = {
@@ -92,6 +93,7 @@ public type OrchestratorCastRequest = {
   created_at_time: ?Nat;
   gasPrice: ?Nat;
   gasLimit: ?Nat;
+  maxPriorityFeePerGas: ?Nat;
 };
 
 // Structure for updating the remote ownership status of an NFT
@@ -239,8 +241,9 @@ public type ICRC99Service = {
   icrc99_remote_owner_of: ([Nat]) -> async [?RemoteOwner];
   icrc99_request_remote_owner_status: ([RequestRemoteOwnerRequest], ?ICRC7Service.Account) -> async [?RemoteOwnerResult];
   icrc99_cast: ([CastRequest], ?ICRC7Service.Account) -> async [?CastResult];
-  icrc99_cast_cost: ([CastCostRequest]) -> async RemoteTokenCost;
+  icrc99_cast_cost: (CastCostRequest) -> async Nat; //todo: should be null so we can return an error
   icrc99_cast_status: ([Nat], account : ?Account) -> async [?(CastStateShared)];
+  icrc99_burn_fund_address: (Nat) -> async ((Text, Network));
 };
 
 }

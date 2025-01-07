@@ -66,8 +66,9 @@ module {
         var amountPerICOwnerRequest = 2_500_000_000_000;
         var amountPerOtherOwnerRequest = 2_500_000_000_000; 
         var amountBasePerOwnerRequest = 1_000_000_000;
+       
         var cycleLedgerCanister = Principal.fromText("um5iw-rqaaa-aaaaq-qaaba-cai");
-        var amountPerETHCast = 2_500_000_000_000;
+        var amountPerETHCast = 1_000_000_000_000;
       }
     };
 

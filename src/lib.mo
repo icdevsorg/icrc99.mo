@@ -1,6 +1,7 @@
 import MigrationLib "./migrations";
 import MigrationTypes "./migrations/types";
 
+import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Buffer "mo:base/Buffer";
 import Cycles "mo:base/ExperimentalCycles";
@@ -13,6 +14,7 @@ import Nat "mo:base/Nat";
 import Nat64 "mo:base/Nat64";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
+import Nat8 "mo:base/Nat8";
 
 
 import BTree "mo:stableheapbtreemap/BTree";
@@ -110,10 +112,18 @@ module {
       case(null) D.trap("No Environment Set");
     };
 
-    let lockAccount = {
+    public let lockAccount = {
       owner = canisterId;
       subaccount = ?Blob.fromArray([137, 230, 221, 144, 163, 86, 127, 219, 122, 226, 19, 221, 4, 253, 103, 28, 49, 143, 232, 219, 63, 101, 187, 221, 95, 4, 183, 14, 135, 163, 238, 247]);
     };
+
+    public let burnAccount = {
+      owner = canisterId;
+      subaccount = ?Blob.fromArray([153, 206,  91, 170, 226, 140, 198, 236, 
+        226, 155,  13, 202,  67, 200, 236,  40, 
+        67, 205, 170,  45,  82, 244, 218, 184, 
+        38,  61,  80,  30, 149,  86,  32,  96]);
+            };
 
     
 
@@ -355,6 +365,10 @@ module {
       return Buffer.toArray(results);
     };
 
+    public func cast_cost(request: CastCostRequest) : Nat{
+      return state.cycleSettings.amountPerETHCast;
+    };
+
     public func calcOwnerRequestCalc(items: [RequestRemoteOwnerRequest]) : Nat {
       var total = 0;
       for(thisItem in items.vals()){
@@ -380,21 +394,20 @@ module {
     };
 
 
+    public let lockMemo =  Blob.toArray(Text.encodeUtf8("99lock"));
+    public let unlockMemo =  Blob.toArray(Text.encodeUtf8("99unlock"));
 
-    public func cast(caller: Principal, requests: [CastRequest], account: ?Account) : async* [?CastResult] {
+    public func cast<system>(caller: Principal, requests: [CastRequest], account: ?Account) : async* [?CastResult] {
 
       debug if(debug_channel.announce) D.print(debug_show("Cast Request: " # debug_show(requests)));
       //check cycle balance?
       let totalNeeded = calcCastCost(requests);
       var balance = Cycles.available();
 
-      var minimumBaseCost = state.cycleSettings.amountBasePerOwnerRequest * requests.size();
       var totalCharge = 0;
       var procPending = false;
 
       debug if(debug_channel.announce) D.print(debug_show("Total Needed: " # debug_show(totalNeeded) # " Balance: " # debug_show(balance)));
-
-      debug if(debug_channel.announce) D.print(debug_show("Minimum Base Cost: " # debug_show(minimumBaseCost)));
 
       debug if(debug_channel.announce) D.print(debug_show("Service: " # debug_show(state.service)));
 
@@ -412,7 +425,7 @@ module {
         let foundAllowance = cycleLedger.icrc2_allowance({
           account = foundAccount;
           spender = {
-            owner = state.orchestrator;
+            owner = canisterId;
             subaccount = null;
           };
         });
@@ -420,6 +433,7 @@ module {
 
         switch(await foundAllowance, await foundBalance){
           case(allowance, foundBalance){
+            debug if(debug_channel.announce) D.print(debug_show("Allowance: " # debug_show(allowance) # " Balance: " # debug_show(foundBalance)));
             if(allowance.allowance < totalNeeded){
               //todo charge base
               return [?#Err(#InsufficientAllowance((allowance.allowance, totalNeeded)))];
@@ -495,9 +509,20 @@ module {
           continue proc;
         };
 
-        switch(environment.icrc7.update_token_owner(thisItem.tokenId, ?currentOwner, lockAccount)){
-          case(#err(err)){
-             results.add(?#Err(#GenericError("Error locking token " # debug_show(err))));
+        switch((environment.icrc7.transfer<system>(currentOwner.owner,
+        [{
+          from_subaccount = currentOwner.subaccount;
+          to = lockAccount;
+          token_id = thisItem.tokenId;
+          memo = ?(Blob.fromArray(Array.tabulate<Nat8>(32, func(i): Nat8 {
+            if(i < lockMemo.size()){
+              lockMemo[i];
+            } else 0;
+          })));
+          created_at_time = ?Nat64.fromNat(getTime());
+        }])[0])){
+          case(null){
+             results.add(?#Err(#GenericError("Error locking token")));
             continue proc;
           };
           case(_){};
@@ -560,7 +585,17 @@ module {
       Int.abs(Time.now());
     };
 
-    private func procCast(castId: Nat) : async(){
+    public func file_original_minter(token_id: Nat, owner: Account) : (){
+      ignore BTree.insert(state.originalMinterMap, Nat.compare, token_id, owner);
+      return;
+    };
+
+    public func file_remote_owner(token_id: Nat, owner: RemoteOwner) : (){
+      ignore BTree.insert(state.remoteOwnerMap, Nat.compare, token_id, owner);
+      return;
+    };
+
+    private func procCast<system>(castId: Nat) : async(){
       debug if(debug_channel.announce) D.print(debug_show("Processing Cast: " # debug_show(castId)));
       let ?castState = BTree.get(state.castStates, Nat.compare, castId) else {
         //todo: Log and handle
@@ -603,13 +638,31 @@ module {
         debug if(debug_channel.announce) D.print(debug_show("Error in procCast: " # Error.message(err)));
         
         updateCastStatus(castState, #Error(#NetworkError(Error.message(err))));
-      } finally {
+
         //unlock the token
         if(bInProgress == false){
           //rollback
           //todo: Log and handle
-          ignore environment.icrc7.update_token_owner(castState.originalRequest.tokenId, ?lockAccount, {owner = caller; subaccount = castState.originalRequest.fromSubaccount});
+          ignore environment.icrc7.transfer<system>(lockAccount.owner ,
+            [{
+              from_subaccount = lockAccount.subaccount;
+              to = {
+                owner = castState.originalCaller;
+                subaccount = castState.originalRequest.fromSubaccount
+              };
+              token_id = castState.originalRequest.tokenId;
+              memo = ?(Blob.fromArray(Array.tabulate<Nat8>(32, func(i): Nat8 {
+                if(i < unlockMemo.size()){
+                  unlockMemo[i];
+                } else 0;
+              })));
+              created_at_time = ?Nat64.fromNat(getTime());
+            }])[0];
         };
+        
+      } finally {
+        
+        
       };
         
     };
@@ -654,22 +707,40 @@ module {
         case(#WaitingOnMint(val)){};
         case(#WaitingOnTransfer(val)){};
         case(#RemoteFinalized(val)){
-          if(networkHash.1(castState.nativeChain.network, castState.originalRequest.remoteContract.network) and Text.equal(Text.toLowercase(castState.nativeChain.contract), Text.toLowercase(castState.originalRequest.remoteContract.contract))){
-            //we only burn if the item is being transfered to the network it came from
-            await* burnCompletedCast(castId);
-          };
+         
         };
         case(#Completed(val)){
-          let remoteOwner : RemoteOwner = #remote({
-            contract = castState.originalRequest.remoteContract;
-            owner = castState.originalRequest.targetOwner;
-            timestamp = Int.abs(Time.now());
-          });
-          ignore BTree.insert(state.remoteOwnerMap, Nat.compare, castState.originalRequest.tokenId, remoteOwner);
+           if(networkHash.1(castState.nativeChain.network, castState.originalRequest.remoteContract.network) and Text.equal(Text.toLowercase(castState.nativeChain.contract), Text.toLowercase(castState.originalRequest.remoteContract.contract))){
+              //we only burn if the item is being transfered to the network it came from
+              debug if(debug_channel.announce) D.print(debug_show("Burn Cast"));
+              await* burnCompletedCast(castId);
+            } else {
+            let remoteOwner : RemoteOwner = #remote({
+              contract = castState.originalRequest.remoteContract;
+              owner = castState.originalRequest.targetOwner;
+              timestamp = Int.abs(Time.now());
+            });
+            ignore BTree.insert(state.remoteOwnerMap, Nat.compare, castState.originalRequest.tokenId, remoteOwner);
+            //stays in the locked state
+            };
         };
         case(#Error(val)){
           debug if(debug_channel.announce) D.print(debug_show("Error handled...trying rollback update_cast_status: " # debug_show(val)));
-          let result =  environment.icrc7.update_token_owner(castState.originalRequest.tokenId, ?lockAccount, {owner = castState.originalCaller; subaccount = castState.originalRequest.fromSubaccount});
+          let result =  ignore environment.icrc7.transfer<system>(lockAccount.owner,
+            [{
+              from_subaccount = lockAccount.subaccount;
+              to = {
+                owner = castState.originalCaller;
+                subaccount = castState.originalRequest.fromSubaccount
+              };
+              token_id = castState.originalRequest.tokenId;
+              memo = ?(Blob.fromArray(Array.tabulate<Nat8>(32, func(i): Nat8 {
+                if(i < unlockMemo.size()){
+                  unlockMemo[i];
+                } else 0;
+              })));
+              created_at_time = ?Nat64.fromNat(getTime());
+            }])[0];
 
           debug if(debug_channel.announce) D.print(debug_show("Rollback Result: " # debug_show(result)));
 
@@ -689,13 +760,42 @@ module {
         return;
       };
 
+      debug if(debug_channel.announce) D.print(debug_show("Burn Cast: " # debug_show(castState)));
+
       let burntrx = switch(environment.icrc7.burn_nfts<system>(lockAccount.owner, {created_at_time = ?Nat64.fromNat(getTime());memo = null; tokens = [castState.originalRequest.tokenId]})){
           case(#err(err)){
             //todo: what to do here since the item has been transfered but the burn failed(shouldn't happen but need to handle.  At least it will be stuck in the lock account...study if remint will move it back to the new owner)
+            debug if(debug_channel.announce) D.print(debug_show("Error burning: " # debug_show(err)));
             return;
           };
-          case(#ok(val)) val;
+          case(#ok(val)) {
+            debug if(debug_channel.announce) D.print(debug_show("Burned: " # debug_show(val)));
+            val
+          };
         };
+
+        //deindex
+        ignore BTree.delete(state.remoteOwnerMap, Nat.compare, castState.originalRequest.tokenId);
+        ignore BTree.delete(state.originalMinterMap, Nat.compare, castState.originalRequest.tokenId);
+    };
+
+    public func burn_fund_address(caller: Principal,request: Nat) : async* ?(Text,Network) {
+
+      let ?originalMinter = BTree.get(state.originalMinterMap, Nat.compare, request) else {
+    
+        return null;
+      };
+
+      let ?queryResults = await orchestratorService.get_remote_approval_address({
+        account = originalMinter;
+        remoteNFTPointer = {
+          tokenId = request;
+          contract = state.nativeChain.contract;
+          network = state.nativeChain.network;
+        };
+      }, null) else return null;
+
+      return ?(queryResults, state.nativeChain.network);
     };
 
     public func calcCastCost(items: [CastRequest]) : Nat {

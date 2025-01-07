@@ -7,6 +7,8 @@ module {
 
   public type ICRC16Map = [(Text, ICRC16.CandyShared)];
 
+  public type RpcServices = EVM_RPC.RpcServices;
+
   public type GetCallResult = {
     #Ok: Text;
     #Err: RemoteError;
@@ -88,6 +90,7 @@ module {
         #Remove;
       }
     };
+    #SetTecdsaKeyName: Text;
 
 
   };
@@ -175,7 +178,6 @@ module {
 
   public type MintRequest = {
     nft: RemoteNFTPointer;
-    maxBytes: Nat;
     mintToAccount: Account;
     spender: ?Account;
     resume: ?(Nat, MintResumeOption)
@@ -214,6 +216,7 @@ module {
     created_at_time: ?Nat;
     gasPrice: ?Nat;
     gasLimit: ?Nat;
+    maxPriorityFeePerGas: ?Nat;
   };
 
   // Structure for casting operation results
@@ -269,17 +272,40 @@ public type CastError = {
   #GenericError : Text;
 };
 
+  public type ContractStateShared = {
+    contractId : Nat;
+     ckNFTCanisterId : ?Nat;
+     writingContractCanisterId: ?Text;
+     nextQuery: ?Nat;
+     retries: ?Nat;
+     address: ?Text;
+     network: ?Network;
+     confirmed: Bool;
+     deploymentTrx: ?Text;
+     contractType : {
+      #Owned: ContractPointer;
+      #Remote;
+    };
+  };
+
 
   public type Service = actor {
     get_remote_owner : ([RemoteNFTPointer]) -> async [?GetCallResult];
     get_remote_meta : ([RemoteNFTPointer]) -> async [?GetCallResult];
-    get_approval_address:  (ApprovalAddressRequest, ?Account) -> async ?Text; //not a query because it may require a call to the tecds chain
+    get_remote_approval_address:  (ApprovalAddressRequest, ?Account) -> async ?Text; //not a query because it may require a call to the tecdsa chain
+    
     get_ck_nft_canister: query ([ContractPointer]) -> async [?Principal];
     get_creation_cost: (ContractPointer) -> async Nat;
+    get_mint_cost: ([MintRequest]) -> async [?Nat];
+    get_remote_cost: (ContractPointer, Network) -> async Nat;
     create_canister: (ContractPointer, CanisterDefaults, Account) -> async CreateCanisterResponse;
     mint: (mintRequest: MintRequest,  account: ?Account) -> async MintResult;
-    create_remote : (ContractPointer, Network, account: ?Account) -> async CreateRemoteResponse;
+    create_remote : (ContractPointer, Network, Nat, Nat, account: ?Account) -> async CreateRemoteResponse;
+    get_icrc99_address: (Principal, Network) -> async ?(Text,[Nat8]);
     get_mint_status: ([Nat]) -> async [?MintStatus];
+    get_remote_status: ([Nat]) -> async [?ContractStateShared];
+    get_remote: ([(ContractPointer, Network)]) -> async [?ContractStateShared];
+    calc_eth_call_cycles: shared query (EVM_RPC.RpcServices, Nat, Text) -> async Nat;
     cast : (CastRequest) -> async CastResult;
   };
 
