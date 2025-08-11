@@ -9,7 +9,7 @@ import SetLib "mo:map/Set";
 import Array "mo:base/Array";
 import Principal "mo:base/Principal";
 import BTreeLib "mo:stableheapbtreemap/BTree";
-import ICRC7 "../../../../../../PanIndustrial/code/icrc7.mo/src";
+import ICRC7 "mo:icrc7-mo";
 
 import Service "../../service";
 

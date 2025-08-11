@@ -403,6 +403,7 @@ module {
       //check cycle balance?
       let totalNeeded = calcCastCost(requests);
       var balance = Cycles.available();
+      
 
       var totalCharge = 0;
       var procPending = false;
@@ -421,7 +422,7 @@ module {
              return [?#Err(#InsufficientAllowance((0, totalNeeded)))];
           };
         };  
-        //check remote allowance
+        //check remote allowance - ckNFT canister should be the spender for cast operations
         let foundAllowance = cycleLedger.icrc2_allowance({
           account = foundAccount;
           spender = {
@@ -442,9 +443,42 @@ module {
               //todo charge base
               return [?#Err(#InsufficientBalance((balance, totalNeeded)))];
             };
+            
+            try{
+              let transferResult = await cycleLedger.icrc2_transfer_from({
+                from = foundAccount;
+                to = {
+                  owner = canisterId;
+                  subaccount = null;
+                };
+                amount = totalNeeded;
+                created_at_time = ?Nat64.fromNat(getTime());
+                memo = null;
+                spender_subaccount = null;
+                fee = ?100_000_000; //todo: make this configurable
+              });
+              debug if(debug_channel.announce) D.print(debug_show("Transfer Result: " # debug_show(transferResult)));
+              balance := totalNeeded;
+            } catch (err) {
+              debug if(debug_channel.announce) D.print(debug_show("Transfer Error: " # Error.message(err)));
+              return [?#Err(#GenericError("Error transferring cycles: " # Error.message(err)))];
+            };
+            
             balance := totalNeeded;
+            
           };
         };
+      } else {
+        debug if(debug_channel.announce) D.print(debug_show("Balance is good"));
+        let result = await cycleLedger.deposit({
+          to = {
+            owner = state.orchestrator;
+            subaccount = null;
+          };
+          memo = null;
+        });
+        debug if(debug_channel.announce) D.print(debug_show("Deposit Result: " # debug_show(result)));
+        balance := totalNeeded;
       };
 
       debug if(debug_channel.announce) D.print(debug_show("Balance is good"));
@@ -470,7 +504,7 @@ module {
            continue proc;
         };
 
-        let defaultUri = "https://" # Principal.toText(canisterId) # ".raw.ic0.app" # "/---/icrc59/-/" # Nat.toText(thisItem.tokenId) # "/metadata?mode=json";
+        let defaultUri = "https://" # Principal.toText(canisterId) # ".raw.icp0.io" # "/---/icrc59/-/" # Nat.toText(thisItem.tokenId) # "/metadata?mode=json";
 
 
         debug if(debug_channel.announce) D.print(debug_show("NFT: " # debug_show(nft.meta)));
@@ -535,6 +569,7 @@ module {
           continue proc;
         };
 
+        //todo: should probably include cycles transfered here?
         let castState : CastState = {
           castId = state.nextCastId;
           var remoteCastId = null;
@@ -543,7 +578,7 @@ module {
           originalMinter = originalMinter;
           uri = uri;
           var includedCycles = balance/requests.size();
-          var usedCycles = 0;
+          var usedCycles = totalNeeded;
           startTime = getTime();
           originalCaller = caller;
           var status = #Created;
