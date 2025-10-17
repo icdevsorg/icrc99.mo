@@ -15,10 +15,12 @@ import Nat64 "mo:base/Nat64";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
 import Nat8 "mo:base/Nat8";
+import Nat32 "mo:base/Nat32";
 
 
 import BTree "mo:stableheapbtreemap/BTree";
 import {URLEncoding} "mo:encoding/Base64";
+import BaseX "mo:base-x-encoder";
 
 import Service "service";
 import CLService "cycleLedger";
@@ -65,6 +67,7 @@ module {
   public type RemoteOwnershipUpdateResult =   Service.RemoteOwnershipUpdateResult;
   public type Network =                       Service.Network;
   public type RemoteNFTPointer =              Service.RemoteNFTPointer;
+  public type Service =                       Service.ICRC99Service;  // Export Service type for orchestrator
 
   public type GetCallResult =                 OrchestratorService.GetCallResult;
 
@@ -105,7 +108,7 @@ module {
     };
 
 
-  public class ICRC99(stored: ?State, caller: Principal, canisterId: Principal, args: ?InitArgsList, _environment: ?Environment, storageChanged: (State) -> ()){
+  public class ICRC99(stored: ?State, caller: Principal, canisterId: Principal, _args: ?InitArgsList, _environment: ?Environment, storageChanged: (State) -> ()){
 
     public let environment = switch(_environment){
       case(?val) val;
@@ -130,7 +133,10 @@ module {
     public type RemoteContractPointer = Service.RemoteContractPointer;
     public type RemoteOwner = Service.RemoteOwner;
 
-    let #v0_0_1(#data(state)) = Migration.runMigration<MigrationTypes.State, MigrationTypes.Args>(stored, null, caller, Migration.migration);
+    let state = switch(Migration.runMigration<MigrationTypes.State, MigrationTypes.Args>(stored, null, caller, Migration.migration)){
+      case(#v0_0_1(#data(val))) val;
+      case(_) D.trap("Unsupported migration state");
+    };
 
     storageChanged(#v0_0_1(#data(state)));
 
@@ -149,12 +155,12 @@ module {
 
     public func get_stats() : Stats {
       return {
-        nativeChain = state.nativeChain;
         service = state.service;
         orchestrator = state.orchestrator;
-        native_chain = state.nativeChain;
+        nativeChain = state.nativeChain;
         remoteOwnerMap = BTree.toArray(state.remoteOwnerMap);
         originalMinterMap = BTree.toArray(state.originalMinterMap);
+        solanaMintAddressMap = BTree.toArray(state.solanaMintAddressMap);
         nextCastId = state.nextCastId;
         cycleSettings = {
           amountPerEthOwnerRequest = state.cycleSettings.amountPerEthOwnerRequest;
@@ -165,6 +171,7 @@ module {
           amountBasePerOwnerRequest = state.cycleSettings.amountBasePerOwnerRequest;
           cycleLedgerCanister = state.cycleSettings.cycleLedgerCanister;
           amountPerETHCast = state.cycleSettings.amountPerETHCast;
+          amountPerSolanaCast = state.cycleSettings.amountPerSolanaCast;
         };
       };
     };
@@ -207,6 +214,19 @@ module {
       };
     };
 
+    private func updateSolanaOwners(requests: [RemoteNFTPointer]) : async* ([?GetCallResult], Nat) {
+      let totalCost = state.cycleSettings.amountPerSolanaOwnerRequest * requests.size();
+      Cycles.add<system>(totalCost);
+      try {
+        let result = await orchestratorService.get_remote_owner(requests);
+        let refunded = Cycles.refunded();
+        return (result, totalCost - refunded);
+      } catch (err) {
+        let refunded = Cycles.refunded();
+        return ([?#Err(#GenericError("Error getting Solana owner " # Error.message(err)))],totalCost - refunded);
+      };
+    };
+
     public func request_remote_owner_status(caller: Principal, requests: [RequestRemoteOwnerRequest], account: ?Account) : async* [?RemoteOwnershipUpdateResult] {
 
       
@@ -214,7 +234,7 @@ module {
       let totalNeeded = calcOwnerRequestCalc(requests);
       let balance = Cycles.available();
 
-      var minimumBaseCost = state.cycleSettings.amountBasePerOwnerRequest * requests.size();
+      var _minimumBaseCost = state.cycleSettings.amountBasePerOwnerRequest * requests.size();
       var totalCharge = 0;
 
       if(balance < totalNeeded){
@@ -257,7 +277,7 @@ module {
       label proc for(thisItem in requests.vals()){
         let currentIndex = index;
         index += 1;
-        let ?aNFT = environment.icrc7.get_nft(thisItem.remoteNFTPointer.tokenId) else {
+        let ?_aNFT = environment.icrc7.get_nft(thisItem.remoteNFTPointer.tokenId) else {
           totalCharge += state.cycleSettings.amountBasePerOwnerRequest;
           results.put(currentIndex, ?#Err(#NotFound));
           continue proc;
@@ -291,6 +311,20 @@ module {
                 Vector.add(aVec, (currentIndex, thisItem.remoteNFTPointer));
                 //results.add(?remoteOwner);
               };
+              case(#Solana(val)){
+                let aVec = switch(Map.get(groups, networkHash, #Solana(val))){
+                  case(?vec){
+                    vec;
+                  };
+                  case(null){
+                    let vec : Vector.Vector<(Nat, RemoteNFTPointer)> = Vector.new<(Nat, RemoteNFTPointer)>();
+                    ignore Map.put(groups, networkHash, #Solana(val) : Network, vec : Vector.Vector<(Nat, RemoteNFTPointer)>);
+                    vec;
+                  };
+                };
+                Vector.add(aVec, (currentIndex, thisItem.remoteNFTPointer));
+                //results.add(?remoteOwner);
+              };
               case(_){
                 //todo: charge the total cost/base amount
 
@@ -312,14 +346,15 @@ module {
                 x.1;
               })))));
             };
-            case(#Solana(val)){
-              //todo: get rid of these traps and make sure you charge the base
+            case(#Solana(_val)){
+              awaits.add((vecs, updateSolanaOwners(Vector.toArray<RemoteNFTPointer>(Vector.map<(Nat, RemoteNFTPointer), RemoteNFTPointer>(vecs, func(x: (Nat, RemoteNFTPointer)){
+                x.1;
+              })))));
+            };
+            case(#Bitcoin(_val)){
               D.trap("nyi");
             };
-            case(#Bitcoin(val)){
-              D.trap("nyi");
-            };
-            case(#IC(val)){
+            case(#IC(_val)){
               D.trap("nyi");
             };
             case(#Other(val)){
@@ -366,7 +401,26 @@ module {
     };
 
     public func cast_cost(request: CastCostRequest) : Nat{
-      return state.cycleSettings.amountPerETHCast;
+      switch(request.network){
+        case(#Ethereum(val)){
+          return state.cycleSettings.amountPerETHCast;
+        };
+        case(#Solana(val)){
+          return state.cycleSettings.amountPerSolanaCast;
+        };
+        case(#Bitcoin(val)){
+          // Bitcoin not yet implemented
+          return state.cycleSettings.amountPerETHCast; // Fallback
+        };
+        case(#IC(val)){
+          // IC not yet implemented  
+          return state.cycleSettings.amountPerETHCast; // Fallback
+        };
+        case(#Other(val)){
+          // Other networks not yet implemented
+          return state.cycleSettings.amountPerETHCast; // Fallback
+        };
+      };
     };
 
     public func calcOwnerRequestCalc(items: [RequestRemoteOwnerRequest]) : Nat {
@@ -439,9 +493,11 @@ module {
               //todo charge base
               return [?#Err(#InsufficientAllowance((allowance.allowance, totalNeeded)))];
             };
-            if(foundBalance < totalNeeded){
+            // For ICRC2 transfer_from, user needs enough balance to cover amount + fee
+            let transferFee = 100_000_000; // Same fee as used in transfer_from below
+            if(foundBalance < (totalNeeded + transferFee)){
               //todo charge base
-              return [?#Err(#InsufficientBalance((balance, totalNeeded)))];
+              return [?#Err(#InsufficientBalance((foundBalance, totalNeeded + transferFee)))];
             };
             
             try{
@@ -484,14 +540,14 @@ module {
       debug if(debug_channel.announce) D.print(debug_show("Balance is good"));
 
       let results = Buffer.Buffer<?CastResult>(requests.size());
-      let groups = Map.new<Network,  Vector.Vector<(Nat,RemoteNFTPointer)>>();
+      let _groups = Map.new<Network,  Vector.Vector<(Nat,RemoteNFTPointer)>>();
 
-      let awaitBuffer = Buffer.Buffer<(Nat, CastRequest, async CastResult)>(requests.size());
+      let _awaitBuffer = Buffer.Buffer<(Nat, CastRequest, async CastResult)>(requests.size());
 
       var index = 0;
       label proc for(thisItem in requests.vals()){
         debug if(debug_channel.announce) D.print(debug_show("Processing Item: " # debug_show(thisItem)));
-        let currentIndex = index;
+        let _currentIndex = index;
         index += 1;
         //make sure the user owns the nft
         let #ok(owner) = environment.icrc7.get_token_owner_canonical(thisItem.tokenId) else {
@@ -841,7 +897,7 @@ module {
             total += state.cycleSettings.amountPerETHCast;
           };
           case(#Solana(val)){
-            D.trap("nyi");
+            total += state.cycleSettings.amountPerSolanaCast;
           };
           case(#Bitcoin(val)){
             D.trap("nyi");
@@ -856,5 +912,83 @@ module {
       };
       total;
     };
+
+    /// ICRC-99 async interface for getting cast costs
+    /// Implements the icrc99_cast_cost service method
+    public func icrc99_cast_cost(request: CastCostRequest) : async Nat {
+      cast_cost(request);
+    };
+
+    /// ICRC-99 query interface for getting remote addresses
+    /// Returns chain-specific addresses where NFTs reside on remote chains
+    /// For Solana: returns the mint address (base58-encoded public key)
+    /// For Ethereum: returns the contract address
+    public func icrc99_get_remote_addresses(caller: Principal, tokenIds: [Nat]) : [?Text] {
+      let results = Buffer.Buffer<?Text>(tokenIds.size());
+      
+      for (tokenId in tokenIds.vals()) {
+        // Check if we have a Solana mint address mapping for this token
+        switch (BTree.get(state.solanaMintAddressMap, Nat.compare, tokenId)) {
+          case (?mintAddressNat) {
+            // Convert Nat to base58 Solana address
+            // TODO: Implement proper Nat->base58 conversion
+            // For now, return as Text representation of Nat
+            results.add(?Nat.toText(mintAddressNat));
+          };
+          case (null) {
+            // No Solana mapping, check if there's a remote owner with address info
+            switch (BTree.get(state.remoteOwnerMap, Nat.compare, tokenId)) {
+              case (?#remote(details)) {
+                // For non-Solana chains, return the contract address
+                results.add(?details.contract.contract);
+              };
+              case (_) {
+                results.add(null);
+              };
+            };
+          };
+        };
+      };
+      
+      return Buffer.toArray(results);
+    };
+
+    /// Update remote address for a token
+    /// Called by orchestrator when a Solana NFT mint is completed
+    /// Stores the mint address for later retrieval via icrc99_get_remote_addresses
+    public func update_nft_remote_address(caller: Principal, tokenId: Nat, remoteAddress: Text) : {#ok: (); #err: Text} {
+      // Only the orchestrator should be able to call this
+      if (caller != state.orchestrator) {
+        return #err("Only orchestrator can update remote addresses");
+      };
+      
+      // Convert base58 Solana address to Nat using BaseX decoder
+      let bytesResult = BaseX.fromBase58(remoteAddress);
+      let addressNat = switch(bytesResult) {
+        case(#ok(bytes)) {
+          // Convert bytes to Nat (big-endian)
+          var result: Nat = 0;
+          for (byte in bytes.vals()) {
+            result := result * 256 + Nat8.toNat(byte);
+          };
+          result
+        };
+        case(#err(msg)) {
+          return #err("Failed to decode base58 address: " # msg);
+        };
+      };
+      
+      // Store both forward and reverse mappings
+      ignore BTree.insert(state.solanaMintAddressMap, Nat.compare, tokenId, addressNat);
+      ignore BTree.insert(state.solanaMintReverseMap, Nat.compare, addressNat, tokenId);
+      
+      return #ok(());
+    };
+    
+    /// Get IC tokenId from Solana mint address (as Nat)
+    /// Used by assign() to convert Solana mint Nat back to IC tokenId
+    public func get_remote_address_reverse_lookup(solanaMintAsNat: Nat) : ?Nat {
+      BTree.get(state.solanaMintReverseMap, Nat.compare, solanaMintAsNat)
+    };
   };
-};
+}

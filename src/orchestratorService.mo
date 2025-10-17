@@ -21,6 +21,7 @@ module {
     #RPC: {
       #Ethereum : EVM_RPC.RpcError;
       #EthereumMultiSend: EVM_RPC.MultiSendRawTransactionResult;
+      #Solana : SolanaError;
     };
     #NetworkRCPNotFound;
     #NoCkNFTCanister;
@@ -29,27 +30,48 @@ module {
     #InsufficientCycles: (Nat, Nat);
   };
 
+  // Solana-specific error types 
+  public type SolanaError = {
+    #JsonRpcError: { code: Int; message: Text };
+    #TransactionError: { signature: Text; error: Text; logs: [Text] };
+    #AccountNotFound: Text;
+    #InvalidTransaction: Text;
+    #NetworkError: Text;
+    #ConsensusError: Text;
+  };
+
   public type Network = { 
     #Ethereum: ?Nat; //chain id 
-    #Solana: ?Nat; //chain id
+    #Solana: ?SolanaCluster; //cluster 
     #Bitcoin: ?Text;
     #IC: ?Text; //identifier
     #Other: ICRC16Map; 
   };
 
+  public type SolanaCluster = {
+    #Mainnet;
+    #Devnet;
+    #Testnet;
+    #Custom: Text;
+  };
+
   public type RemoteNFTPointer =  {
     network: Network;
-    contract: Text;
-    tokenId: Nat;
+    contract: Text; // For Solana, this is the mint address
+    tokenId: Nat;   // For Solana, this is typically the token account or 0 for NFTs
   };
 
   public type ContractPointer = {
     network: Network;
-    contract: Text;
+    contract: Text; // For Solana, this is the mint address
   };
 
-  public type SolonaRPCService = {
-    #Generic: EVM_RPC.RpcApi;
+  public type SolanaRPCService = {
+    #Custom: {
+      url: Text;
+      headers: ?[(Text, Text)];
+    };
+    #Provider: Nat64; // Provider ID for supported services
   };
 
   public type BitcoinRPCService = {
@@ -66,7 +88,7 @@ module {
       canisterId: Principal;
     };
     #Solana: {
-      rpc: SolonaRPCService;
+      rpc: SolanaRPCService;
       canisterId: Principal;
     };
     #Bitcoin: {
@@ -90,7 +112,8 @@ module {
         #Remove;
       }
     };
-    #SetTecdsaKeyName: Text;
+    #SetEthTecdsaKeyName: Text;
+    #SetSolanaSchnorrKeyName: Text;
 
 
   };

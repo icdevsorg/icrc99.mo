@@ -368,7 +368,8 @@ The metadata and state management for NFTs within the ICRC-99 standard includes 
   icrc99:originChain: Network; 
   icrc99:originContract: Text; 
   icrc99:remoteChain: Network; 
-  icrc99:remoteContract: Text; 
+  icrc99:remoteContract: Text;
+  icrc99:remoteAddress: Text; // Chain-specific address where the NFT resides (e.g., Solana mint address)
   icrc99:metadataURL: Text;
   icrc99:status: variant { Casting; Remote; Local }; // The current status of the NFT
 ```
@@ -381,11 +382,25 @@ The metadata and state management for NFTs within the ICRC-99 standard includes 
 - `icrc99:originContract`: The contract ID where the NFT was initially minted.
 - `icrc99:remoteChain`: Indicates the remote blockchain network where the NFT is currently residing.
 - `icrc99:remoteContract`: The contract ID on the remote chain.
+- `icrc99:remoteAddress`: The chain-specific address where the NFT resides on the remote chain. For Solana, this is the mint address (a base58-encoded Solana public key). For Ethereum, this would be the contract address. This allows wallets and explorers to locate the exact on-chain asset.
 - `icrc99:metadataURL`: A URL pointing directly to the NFT metadata.
 - `icrc99:status`: Represents the current state of the NFT which could be one of:
   - `Casting`: Indicates the NFT is in the process of being cast to a remote blockchain and can't be moved.
   - `Remote`: Signifies the NFT is currently located on a different blockchain.
   - `Local`: Denotes that the NFT resides within the local blockchain network.
+
+#### Solana-Specific Considerations
+
+For Solana NFTs, the `icrc99:remoteAddress` field contains the **mint address** of the NFT. In Solana's token program architecture:
+
+- Each NFT is represented by a unique **Mint account** with a supply of 1 and 0 decimals
+- The mint address is a base58-encoded Solana public key (e.g., `7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU`)
+- This mint address is the canonical identifier for the NFT on Solana and is used to:
+  - Look up the NFT in Solana explorers (e.g., Solscan, Solana Explorer)
+  - Query ownership via the Associated Token Account (ATA) derived from the mint and owner
+  - Access Metaplex metadata stored in a PDA derived from the mint address
+
+When an IC-native NFT is cast to Solana, the orchestrator creates or references a Solana mint address and stores it in this metadata field. For externally-minted Solana NFTs imported to IC, this field preserves the original mint address for round-trip operations.
   
 These metadata elements and types facilitate the robust management and cross-chain operability of NFTs. They ensure comprehensive tracking and accurate state representation of NFTs, enabling seamless integration and interaction between different blockchain networks.
 
@@ -548,6 +563,32 @@ icrc99_cast_status: query(vec nat) -> async vec opt CastStatus;
 #### Usage
 
 This method is crucial for tracking the entire lifecycle of the casting process, enabling users to understand exactly where their NFTs are in the cross-chain transfer journey. Given the complex nature of these operations, this granular status reporting helps ensure transparency and immediate troubleshooting if issues arise. By returning detailed status information for each NFT, this method provides a comprehensive view of the state of casting operations, allowing users and processes to react accordingly based on a multitude of potential scenarios and outcomes.
+
+### icrc99_get_remote_addresses
+
+```plaintext
+icrc99_get_remote_addresses: query(vec nat) -> vec opt Text;
+```
+
+##### Description
+- **Function**: This query method retrieves the chain-specific remote addresses for NFTs specified by their token IDs. For Solana NFTs, this returns the mint address (base58-encoded public key). For Ethereum NFTs, this would return the contract address. This provides a convenient way for wallets and explorers to locate NFTs on remote chains without parsing metadata.
+- **Parameters**: 
+  - `vec nat`: A vector of NFT token IDs for which remote addresses are being requested.
+- **Returns**: 
+  - `vec opt Text`: A vector of optional Text values, where each element corresponds to the remote address of the NFT. Returns `null` for NFTs that don't have a remote address (i.e., haven't been cast to a remote chain or the mapping hasn't been established yet).
+
+#### Usage
+
+This method allows efficient batch querying of remote addresses, enabling:
+- Wallets to display Solana/Ethereum explorer links for cast NFTs
+- Marketplaces to verify NFT existence on remote chains  
+- Users to track their NFTs across multiple blockchains
+- Developers to build cross-chain NFT applications
+
+For Solana specifically, the returned address can be used to:
+- View the NFT on Solscan: `https://solscan.io/token/<mint_address>`
+- Query ownership via Solana RPC using `getTokenAccountsByOwner`
+- Access Metaplex metadata from the metadata PDA
 
 ### icrc10_supported_standards
 

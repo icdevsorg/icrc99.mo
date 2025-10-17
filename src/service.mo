@@ -10,10 +10,17 @@ module {
 
 public type ICRC16Map = [(Text, ICRC16.CandyShared)];
 
+public type SolanaCluster = {
+  #Mainnet;
+  #Devnet;
+  #Testnet;
+  #Custom: Text;
+};
+
 // The Network public type extending to support cross-chain functionalities
 public type Network = {
   #Ethereum: ?Nat; //chain id 
-    #Solana: ?Nat; //chain id
+    #Solana: ?SolanaCluster; 
     #Bitcoin: ?Text;
     #IC: ?Text; //identifier
     #Other: ICRC16Map; 
@@ -244,6 +251,7 @@ public type ICRC99Service = {
   icrc99_cast_cost: (CastCostRequest) -> async Nat; //todo: should be null so we can return an error
   icrc99_cast_status: ([Nat], account : ?Account) -> async [?(CastStateShared)];
   icrc99_burn_fund_address: (Nat) -> async ((Text, Network));
+  update_nft_remote_address: (Nat, Text) -> async {#ok: (); #err: Text};  // Update remote chain address (called by orchestrator)
 };
 
 }

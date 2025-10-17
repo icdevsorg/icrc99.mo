@@ -1,15 +1,14 @@
 import D "mo:base/Debug";
 import Principal "mo:base/Principal";
 import Vec "mo:vector";
-import Set "mo:map/Set";
 import MigrationTypes "../types";
 
 import v0_0_1 "types";
 
 module {
 
-  let Map = v0_0_1.Map;
-  let Set = v0_0_1.Set;
+  let _Map = v0_0_1.Map;
+  let _Set = v0_0_1.Set;
   let BTree = v0_0_1.BTree;
   let Vector = v0_0_1.Vector;
 
@@ -41,12 +40,14 @@ module {
 
   
     let state : MigrationTypes.Current.State = {
-      var owner = caller;
+
       var service = service;
       var nativeChain = nativeChain;
       var orchestrator = caller;
       var remoteOwnerMap = BTree.init<Nat, RemoteOwner>(null); 
       var originalMinterMap = BTree.init<Nat, Account>(null);
+      var solanaMintAddressMap = BTree.init<Nat, Nat>(null); // IC tokenId -> Solana mint address
+      var solanaMintReverseMap = BTree.init<Nat, Nat>(null); // Solana mint address -> IC tokenId
       //var networkToRPCMap = Map.new<v0_0_1.Network, Set.Set<v0_0_1.FusionRPCService>>();
       var castStates = BTree.init<Nat, CastState>(null);
       var pendingCasts = Vector.new<Nat>();
@@ -55,9 +56,6 @@ module {
         var nextCycleActionId = null;
         var lastActionReported = null;
         var activeActions = 0;
-      };
-      settings = {
-        tecdsaKeyName = "test_key_1";//key_1
       };
       cycleSettings = {
         var amountPerEthOwnerRequest = 2_500_000_000_000;
@@ -69,6 +67,7 @@ module {
        
         var cycleLedgerCanister = Principal.fromText("um5iw-rqaaa-aaaaq-qaaba-cai");
         var amountPerETHCast = 1_000_000_000_000;
+        var amountPerSolanaCast = 2_500_000_000_000; // Higher cost for Solana due to higher transaction fees and complexity
       }
     };
 

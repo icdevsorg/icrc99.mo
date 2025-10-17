@@ -28,6 +28,7 @@ module {
 
   //public type FusionRPCService =      Service.FusionRPCService;
   public type Network =               Service.Network;
+  public type SolanaCluster =         Service.SolanaCluster;
   public type CastRequest =           Service.CastRequest;
   public type OrchestratorCastRequest =           Service.OrchestratorCastRequest;
 
@@ -79,9 +80,14 @@ module {
       case(#Ethereum(_)){
         accumulator +%= 2445342;
       };
-      case (#Solana(?n)){
+      case (#Solana(?cluster)){
         accumulator +%= 643454;
-        accumulator +%= Map.nhash.0(n);
+        switch(cluster) {
+          case(#Mainnet) { accumulator +%= 111; };
+          case(#Devnet) { accumulator +%= 222; };
+          case(#Testnet) { accumulator +%= 333; };
+          case(#Custom(url)) { accumulator +%= Map.thash.0(url); };
+        };
       };
       case(#Solana(_)){
         accumulator +%= 6454;
@@ -318,6 +324,7 @@ module {
 
   public type RemoteOwnerMap = BTree.BTree<Nat, RemoteOwner>;
   public type OriginalMinterMap = BTree.BTree<Nat, Service.Account>;
+  public type SolanaMintAddressMap = BTree.BTree<Nat, Nat>; // IC tokenId -> Solana mint address as Nat
   //public type NetworkMap = Map.Map<Nat, HostingNetworkDetail>;
 
   public type CastStatus = {
@@ -352,6 +359,8 @@ module {
     var service : ?Principal;
     var remoteOwnerMap : RemoteOwnerMap;
     var originalMinterMap : OriginalMinterMap;
+    var solanaMintAddressMap : SolanaMintAddressMap; // Maps IC tokenId to Solana mint address (as Nat)
+    var solanaMintReverseMap : BTree.BTree<Nat, Nat>; // Maps Solana mint address (as Nat) to IC tokenId
     //var networkMap : NetworkMap;
     var castStates : BTree.BTree<Nat, CastState>;
     var pendingCasts: Vector.Vector<Nat>;
@@ -371,6 +380,7 @@ module {
       var cycleLedgerCanister: Principal;
 
       var amountPerETHCast: Nat;
+      var amountPerSolanaCast: Nat;
     };
   };
 
@@ -384,6 +394,7 @@ module {
     nativeChain: RemoteContractPointer;
     remoteOwnerMap: [(Nat, RemoteOwner)];
     originalMinterMap: [(Nat, Account)];
+    solanaMintAddressMap: [(Nat, Nat)]; // IC tokenId -> Solana mint address
     nextCastId: Nat;
     cycleSettings: {
       amountPerEthOwnerRequest: Nat;
@@ -394,6 +405,7 @@ module {
       amountBasePerOwnerRequest: Nat;
       cycleLedgerCanister: Principal;
       amountPerETHCast: Nat;
+      amountPerSolanaCast: Nat;
     };
       
   };
