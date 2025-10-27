@@ -101,6 +101,81 @@ For example:
 let customNetworkExample: Network = Other(vec { ("customKey", Text("customValue")) });
 ```
 
+### RemoteAddressInfo
+
+The `RemoteAddressInfo` type provides comprehensive information about an NFT's remote address, including the contract address, network details, derivation paths, and importantly, the account that controls the approval address (for re-export scenarios).
+
+```plaintext
+type RemoteAddressInfo = record {
+  contract: Text;                    // The remote contract/mint address (e.g., Solana mint address)
+  network: Network;                  // The network where the NFT exists
+  atRestDerivation: opt Blob;        // ICRC99 derivation path (canisterId + network)
+  atRestAccount: opt Account;        // Account that controls the approval address (for transfers)
+  altAddress: opt Text;              // Optional alternative address format
+};
+```
+
+- **contract**:
+  - **Text**: The chain-specific address where the NFT exists on the remote network. For Solana, this is the mint address (base58-encoded public key). For Ethereum, this would be the contract address.
+
+- **network**:
+  - **Network**: The blockchain network where the NFT is located (Ethereum, Solana, Bitcoin, ICP, or Other).
+
+- **atRestDerivation**:
+  - **opt Blob**: The ICRC99 derivation path used to derive addresses for this NFT. This is calculated as `hash(canisterId, network)` and is NOT account-specific. This derivation controls the basic NFT operations.
+
+- **atRestAccount**:
+  - **opt Account**: The IC account that "last burned" the NFT back to the IC (for IC-native NFTs exported to remote chains). This account controls the approval address on the remote chain. When Alice wants to re-export Bob's previously burned NFT, the system uses Bob's account (stored here) to derive Bob's approval address and sign the transfer from that address to Alice's target address. This field is `null` for:
+    - NFTs that originated on the remote chain (never burned back)
+    - NFTs freshly minted on the remote chain (Step 1 of export - no burn yet)
+
+- **altAddress**:
+  - **opt Text**: Optional field for storing alternative address representations if the remote chain supports multiple address formats.
+
+#### The 4-Step NFT Lifecycle and atRestAccount
+
+Understanding when `atRestAccount` is populated is crucial for cross-chain NFT operations:
+
+**Step 1: Initial Export (IC → Remote Chain)**
+```
+User Bob exports NFT #5 to Solana
+- System mints NFT directly to Bob's Solana address
+- Stores: contract=mintAddress, network=Solana, atRestDerivation=hash(canister+network)
+- atRestAccount = null (no burn yet, NFT just minted)
+```
+
+**Step 2: Burn Back to IC (Remote Chain → IC)**
+```
+Bob imports NFT #5 back to IC
+- Bob transfers Solana NFT TO his approval address (derived from his IC account)
+- System mints NFT #5 on IC for Bob
+- Updates: atRestAccount = Bob's account
+- Now the NFT sits in Bob's approval address on Solana, and Bob owns it on IC
+```
+
+**Step 3: Re-Export by New Owner (IC → Remote Chain)**
+```
+Alice (new IC owner) exports NFT #5 to Solana
+- System detects NFT already exists on Solana (idempotency check)
+- Retrieves atRestAccount = Bob's account (from Step 2)
+- Derives Bob's approval address using Bob's account
+- Transfers FROM Bob's approval address TO Alice's target address
+- This works because the canister controls all approval addresses (different derivation paths)
+```
+
+**Step 4: Subsequent Burns and Exports**
+```
+If Alice later burns it back to IC:
+- Updates: atRestAccount = Alice's account
+Next export would transfer from Alice's approval address
+```
+
+This architecture enables:
+- **Secure multi-user flow**: Each user has their own approval address
+- **Idempotent operations**: Re-exports transfer existing NFTs rather than failing
+- **Auditability**: Complete history of who last burned the NFT
+- **Permissionless**: Any IC owner can export without needing the previous burner's signature
+
 ### RemoteContractPointer
 
 The `RemoteContractPointer` type points to a specific contract on a remote blockchain network. It includes the contract's unique ID and the network descriptor.
@@ -567,28 +642,55 @@ This method is crucial for tracking the entire lifecycle of the casting process,
 ### icrc99_get_remote_addresses
 
 ```plaintext
-icrc99_get_remote_addresses: query(vec nat) -> vec opt Text;
+icrc99_get_remote_addresses: query(vec nat) -> vec opt RemoteAddressInfo;
 ```
 
 ##### Description
-- **Function**: This query method retrieves the chain-specific remote addresses for NFTs specified by their token IDs. For Solana NFTs, this returns the mint address (base58-encoded public key). For Ethereum NFTs, this would return the contract address. This provides a convenient way for wallets and explorers to locate NFTs on remote chains without parsing metadata.
+- **Function**: This query method retrieves comprehensive remote address information for NFTs specified by their token IDs. This includes the chain-specific address (e.g., Solana mint address for Solana NFTs, contract address for Ethereum NFTs), network details, derivation paths, and the account that controls the approval address (for re-export scenarios). This provides a complete view of an NFT's remote state without requiring multiple queries.
 - **Parameters**: 
-  - `vec nat`: A vector of NFT token IDs for which remote addresses are being requested.
+  - `vec nat`: A vector of NFT token IDs for which remote address information is being requested.
 - **Returns**: 
-  - `vec opt Text`: A vector of optional Text values, where each element corresponds to the remote address of the NFT. Returns `null` for NFTs that don't have a remote address (i.e., haven't been cast to a remote chain or the mapping hasn't been established yet).
+  - `vec opt RemoteAddressInfo`: A vector of optional `RemoteAddressInfo` objects, where each element contains:
+    - `contract: Text` - The chain-specific remote address
+    - `network: Network` - The blockchain network  
+    - `atRestDerivation: opt Blob` - The ICRC99 derivation path
+    - `atRestAccount: opt Account` - The IC account controlling the approval address
+    - `altAddress: opt Text` - Optional alternative address format
+  - Returns `null` for NFTs that don't have a remote address (i.e., haven't been cast to a remote chain).
 
 #### Usage
 
-This method allows efficient batch querying of remote addresses, enabling:
-- Wallets to display Solana/Ethereum explorer links for cast NFTs
-- Marketplaces to verify NFT existence on remote chains  
-- Users to track their NFTs across multiple blockchains
-- Developers to build cross-chain NFT applications
+This method allows efficient batch querying of complete remote address information, enabling:
+- **Wallets and Explorers**: Display remote chain links and show which user last burned the NFT
+  - For Solana: `https://solscan.io/token/<contract>` (mint address)
+  - For Ethereum: `https://etherscan.io/nft/<contract>/<tokenId>`
+- **Marketplaces**: Verify NFT existence on remote chains and understand the approval address architecture
+- **Cross-chain Applications**: Implement re-export logic by retrieving the stored account to derive the correct approval address
+- **Auditing**: Track the complete lifecycle including who controls each approval address
 
-For Solana specifically, the returned address can be used to:
-- View the NFT on Solscan: `https://solscan.io/token/<mint_address>`
-- Query ownership via Solana RPC using `getTokenAccountsByOwner`
-- Access Metaplex metadata from the metadata PDA
+For Solana specifically, the returned information enables:
+- Viewing the NFT on explorers using the `contract` (mint address)
+- Querying ownership via Solana RPC using `getTokenAccountsByOwner`
+- Accessing Metaplex metadata from the metadata PDA
+- Understanding which IC account can authorize transfers from the approval address
+
+**Example Response**:
+```
+[
+  ?{
+    contract = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";  // Solana mint address
+    network = #Solana("devnet");
+    atRestDerivation = ?(blob "\ab\cd\ef...");  // ICRC99 derivation
+    atRestAccount = ?{                            // Bob's account (last burner)
+      owner = principal "aaaaa-aa...";
+      subaccount = null;
+    };
+    altAddress = null;
+  }
+]
+```
+
+In this example, the NFT with mint address `7xKXtg...` on Solana devnet was last burned by the account with principal `aaaaa-aa...`. When a new owner wants to export this NFT, the system will use this stored account to derive the approval address and sign the transfer.
 
 ### icrc10_supported_standards
 

@@ -15,11 +15,12 @@ module {
   type Network = v0_0_1.Network;
   type RemoteContractPointer = v0_0_1.RemoteContractPointer;
   type RemoteOwner = v0_0_1.RemoteOwner;
+  type RemoteAddressInfo = v0_0_1.RemoteAddressInfo;
   type CastState = v0_0_1.CastState;
   type Account = v0_0_1.Account;
 
 
-  public func upgrade(prevmigration_state: MigrationTypes.State, args: MigrationTypes.Args, caller: Principal): MigrationTypes.State {
+  public func upgrade(prevmigration_state: MigrationTypes.State, args: MigrationTypes.Args, caller: Principal, canister: Principal): MigrationTypes.State {
 
     D.print("in migration upgrade " # debug_show((prevmigration_state, args, caller)));
 
@@ -29,7 +30,14 @@ module {
         ({network = #IC(null); contract=Principal.toText(caller);} : RemoteContractPointer)
       };
       case(?val){
-        (val.nativeChain);
+        // For IC-native canisters, always use the canister's own principal as the contract
+        // For remote chains, use the provided contract address
+        switch(val.nativeChain.network){
+          case(#IC(_)) {
+            {network = val.nativeChain.network; contract = Principal.toText(canister)} : RemoteContractPointer;
+          };
+          case(_) val.nativeChain;
+        };
       };
     };
 
@@ -44,10 +52,10 @@ module {
       var service = service;
       var nativeChain = nativeChain;
       var orchestrator = caller;
-      var remoteOwnerMap = BTree.init<Nat, RemoteOwner>(null); 
+      var remoteOwnerMap = BTree.init<Nat, RemoteOwner>(null);
       var originalMinterMap = BTree.init<Nat, Account>(null);
-      var solanaMintAddressMap = BTree.init<Nat, Nat>(null); // IC tokenId -> Solana mint address
-      var solanaMintReverseMap = BTree.init<Nat, Nat>(null); // Solana mint address -> IC tokenId
+      var solanaMintAddressMap = BTree.init<Nat, RemoteAddressInfo>(null); // IC tokenId -> Remote address info
+      var solanaMintReverseMap = BTree.init<Nat, Nat>(null); // Solana mint Nat -> IC tokenId
       //var networkToRPCMap = Map.new<v0_0_1.Network, Set.Set<v0_0_1.FusionRPCService>>();
       var castStates = BTree.init<Nat, CastState>(null);
       var pendingCasts = Vector.new<Nat>();
@@ -67,7 +75,7 @@ module {
        
         var cycleLedgerCanister = Principal.fromText("um5iw-rqaaa-aaaaq-qaaba-cai");
         var amountPerETHCast = 1_000_000_000_000;
-        var amountPerSolanaCast = 2_500_000_000_000; // Higher cost for Solana due to higher transaction fees and complexity
+        var amountPerSolanaCast = 1_000_000_000_000; // Higher cost for Solana due to higher transaction fees and complexity
       }
     };
 

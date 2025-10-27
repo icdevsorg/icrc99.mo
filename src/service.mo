@@ -64,6 +64,16 @@ public type RemoteContractPointer = {
   contract: Text;
 };
 
+// Remote address information including signing derivation
+// Stores all necessary information to interact with a remote NFT
+public type RemoteAddressInfo = {
+  contract: Text;              // Remote contract/mint address (e.g., Solana mint address as base58)
+  network: Network;            // Which network this address is on
+  atRestDerivation: ?Blob;     // Derivation path that controls this NFT (for signing transfers)
+  atRestAccount: ?Account;     // The account that last "burned" this NFT (controls the approval address)
+  altAddress: ?Text;           // Alternative address format if needed
+};
+
 // Representation of the NFT ownership status (local or remote)
 public type RemoteOwner = {
   #local : ICRC7Service.Account;
@@ -243,7 +253,7 @@ public type CastError = {
 
 
 // The main service public type for the ICRC-99 standard
-public type ICRC99Service = {
+public type ICRC99Service = actor {
   icrc99_native_chain: query() ->  async RemoteContractPointer ;
   icrc99_remote_owner_of: ([Nat]) -> async [?RemoteOwner];
   icrc99_request_remote_owner_status: ([RequestRemoteOwnerRequest], ?ICRC7Service.Account) -> async [?RemoteOwnerResult];
@@ -251,7 +261,9 @@ public type ICRC99Service = {
   icrc99_cast_cost: (CastCostRequest) -> async Nat; //todo: should be null so we can return an error
   icrc99_cast_status: ([Nat], account : ?Account) -> async [?(CastStateShared)];
   icrc99_burn_fund_address: (Nat) -> async ((Text, Network));
-  update_nft_remote_address: (Nat, Text) -> async {#ok: (); #err: Text};  // Update remote chain address (called by orchestrator)
+  icrc99_cast_fund_address: (Nat) -> async ((Text, Network));  // Get approval address for re-export funding
+  icrc99_get_remote_addresses: query ([Nat]) -> async [?RemoteAddressInfo];  // Get remote chain addresses with derivation info
+  update_nft_remote_address: (Nat, Text, Network, Blob, ?Account, ?Text) -> async {#ok: (); #err: Text};  // Update remote address (tokenId, address, network, derivation, atRestAccount, altAddress)
 };
 
 }

@@ -9,6 +9,8 @@ module {
   public let Current = v0_0_1;
 
   public type Args = v0_0_1.InitArgs;
+  public type RemoteAddressInfo = v0_0_1.RemoteAddressInfo;
+  public type Network = v0_0_1.Network;
 
   public type State = {
     #v0_0_0: {#id; #data};

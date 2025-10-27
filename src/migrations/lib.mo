@@ -22,7 +22,8 @@ module {
     prevState: MigrationTypes.State, 
     nextState: MigrationTypes.State, 
     args: MigrationTypes.Args,
-    caller: Principal
+    caller: Principal,
+    canister: Principal
   ): MigrationTypes.State {
 
    
@@ -35,7 +36,7 @@ module {
       let migrate =  upgrades[migrationId];
       migrationId := migrationId + 1;
 
-      state := migrate(state, args, caller);
+      state := migrate(state, args, caller, canister);
     };
 
     return state;
@@ -53,13 +54,13 @@ module {
     initialState: T;
     currentStateVersion: T;
     getMigrationId: (T) -> Nat;
-    migrate: (T,T,A,Principal) -> T;
+    migrate: (T,T,A,Principal, Principal) -> T;
   };
 
-  public func runMigration<T,A>(stored : ?T, args: A, owner: Principal, migration : Migration<T,A>) : T {
+  public func runMigration<T,A>(stored : ?T, args: A, owner: Principal, canister: Principal, migration : Migration<T,A>) : T {
     switch (stored) {
-      case(null) (migration.migrate(migration.initialState, migration.currentStateVersion, args, owner) : T);
-      case(?val) (migration.migrate(val, migration.currentStateVersion, args, owner) : T);
+      case(null) (migration.migrate(migration.initialState, migration.currentStateVersion, args, owner, canister) : T);
+      case(?val) (migration.migrate(val, migration.currentStateVersion, args, owner, canister) : T);
     };
   };
 };

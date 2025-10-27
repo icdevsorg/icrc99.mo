@@ -2,6 +2,7 @@
 // it can lead to bugs when you change those types later, because migration types should not be changed
 // you should also avoid importing these types anywhere in your project directly from here
 // use MigrationTypes.Current property instead
+
 import ICRC16 "mo:candy/types";
 import VectorLib "mo:vector";
 import MapLib "mo:map/Map";
@@ -322,9 +323,19 @@ module {
     fusionRPC: FusionRPCService;    
   }; */
 
+  /// Remote address information including signing derivation
+  /// Stores all necessary information to interact with a remote NFT
+  public type RemoteAddressInfo = {
+    contract: Text;              // Remote contract/mint address (e.g., Solana mint address as base58)
+    network: Network;            // Which network this address is on
+    atRestDerivation: ?Blob;     // Derivation path that controls this NFT (for signing transfers)
+    atRestAccount: ?Service.Account;  // The account that last "burned" this NFT (controls the approval address)
+    altAddress: ?Text;           // Alternative address format if needed
+  };
+
   public type RemoteOwnerMap = BTree.BTree<Nat, RemoteOwner>;
   public type OriginalMinterMap = BTree.BTree<Nat, Service.Account>;
-  public type SolanaMintAddressMap = BTree.BTree<Nat, Nat>; // IC tokenId -> Solana mint address as Nat
+  public type SolanaMintAddressMap = BTree.BTree<Nat, RemoteAddressInfo>; // IC tokenId -> Remote address info
   //public type NetworkMap = Map.Map<Nat, HostingNetworkDetail>;
 
   public type CastStatus = {
@@ -359,7 +370,7 @@ module {
     var service : ?Principal;
     var remoteOwnerMap : RemoteOwnerMap;
     var originalMinterMap : OriginalMinterMap;
-    var solanaMintAddressMap : SolanaMintAddressMap; // Maps IC tokenId to Solana mint address (as Nat)
+    var solanaMintAddressMap : SolanaMintAddressMap; // Maps IC tokenId to remote address info
     var solanaMintReverseMap : BTree.BTree<Nat, Nat>; // Maps Solana mint address (as Nat) to IC tokenId
     //var networkMap : NetworkMap;
     var castStates : BTree.BTree<Nat, CastState>;
@@ -394,7 +405,7 @@ module {
     nativeChain: RemoteContractPointer;
     remoteOwnerMap: [(Nat, RemoteOwner)];
     originalMinterMap: [(Nat, Account)];
-    solanaMintAddressMap: [(Nat, Nat)]; // IC tokenId -> Solana mint address
+    solanaMintAddressMap: [(Nat, RemoteAddressInfo)]; // IC tokenId -> Remote address info
     nextCastId: Nat;
     cycleSettings: {
       amountPerEthOwnerRequest: Nat;

@@ -52,6 +52,7 @@ module {
 
   public type RemoteContractPointer =        Service.RemoteContractPointer;
   public type RemoteOwner =                  Service.RemoteOwner;
+  public type RemoteAddressInfo =            Service.RemoteAddressInfo;
   public type RequestRemoteOwnerRequest =     Service.RequestRemoteOwnerRequest;
   public type CastRequest =                   Service.CastRequest;
   public type CastResult =                    Service.CastResult;
@@ -133,7 +134,7 @@ module {
     public type RemoteContractPointer = Service.RemoteContractPointer;
     public type RemoteOwner = Service.RemoteOwner;
 
-    let state = switch(Migration.runMigration<MigrationTypes.State, MigrationTypes.Args>(stored, null, caller, Migration.migration)){
+    let state = switch(Migration.runMigration<MigrationTypes.State, MigrationTypes.Args>(stored, _args, caller, canisterId, Migration.migration)){
       case(#v0_0_1(#data(val))) val;
       case(_) D.trap("Unsupported migration state");
     };
@@ -889,6 +890,55 @@ module {
       return ?(queryResults, state.nativeChain.network);
     };
 
+    /// Get the approval address that needs funding for a cast (export) operation
+    /// This is used when re-exporting an NFT that was previously burned back to IC
+    /// The NFT is held at the approval address derived from the atRestAccount (last remote owner)
+    public func cast_fund_address(caller: Principal, request: Nat) : async* ?(Text, Network) {
+      // Get the remote address info
+      let ?addressInfo = BTree.get(state.solanaMintAddressMap, Nat.compare, request) else {
+        return null;
+      };
+      
+      // Get the atRestAccount (the account that burned the NFT back to IC)
+      // This is the address whose approval address currently holds the NFT
+      let ?atRestAccount = addressInfo.atRestAccount else {
+        return null;  // No atRestAccount means NFT hasn't been burned back
+      };
+
+      // Get the Solana NFT mint address (stored in altAddress)
+      let ?nftMintAddress = addressInfo.altAddress else {
+        return null;
+      };
+
+      // Convert base58 Solana mint address to Nat for tokenId
+      let solanaTokenId = switch(BaseX.fromBase58(nftMintAddress)) {
+        case(#ok(bytes)) {
+          // Convert bytes to Nat (big-endian)
+          var result: Nat = 0;
+          for (byte in bytes.vals()) {
+            result := result * 256 + Nat8.toNat(byte);
+          };
+          result
+        };
+        case(#err(_)) {
+          return null;
+        };
+      };
+
+      // Get the approval address derived from atRestAccount
+      // This is where the NFT currently sits after burn-back
+      let ?queryResults = await orchestratorService.get_remote_approval_address({
+        account = atRestAccount;
+        remoteNFTPointer = {
+          tokenId = solanaTokenId;  // Solana NFT mint as Nat
+          contract = addressInfo.contract;  // Collection address
+          network = addressInfo.network;
+        };
+      }, null) else return null;
+
+      return ?(queryResults, addressInfo.network);
+    };
+
     public func calcCastCost(items: [CastRequest]) : Nat {
       var total = 0;
       for(thisItem in items.vals()){
@@ -920,27 +970,31 @@ module {
     };
 
     /// ICRC-99 query interface for getting remote addresses
-    /// Returns chain-specific addresses where NFTs reside on remote chains
-    /// For Solana: returns the mint address (base58-encoded public key)
+    /// Returns chain-specific address information including derivation paths
+    /// For Solana: returns the mint address with the derivation path that controls it
     /// For Ethereum: returns the contract address
-    public func icrc99_get_remote_addresses(caller: Principal, tokenIds: [Nat]) : [?Text] {
-      let results = Buffer.Buffer<?Text>(tokenIds.size());
+    public func icrc99_get_remote_addresses(caller: Principal, tokenIds: [Nat]) : [?MigrationTypes.RemoteAddressInfo] {
+      let results = Buffer.Buffer<?MigrationTypes.RemoteAddressInfo>(tokenIds.size());
       
       for (tokenId in tokenIds.vals()) {
-        // Check if we have a Solana mint address mapping for this token
+        // Check if we have a remote address mapping for this token
         switch (BTree.get(state.solanaMintAddressMap, Nat.compare, tokenId)) {
-          case (?mintAddressNat) {
-            // Convert Nat to base58 Solana address
-            // TODO: Implement proper Nat->base58 conversion
-            // For now, return as Text representation of Nat
-            results.add(?Nat.toText(mintAddressNat));
+          case (?addressInfo) {
+            // Return the complete address info including derivation
+            results.add(?addressInfo);
           };
           case (null) {
-            // No Solana mapping, check if there's a remote owner with address info
+            // No mapping found, check if there's a remote owner with address info
             switch (BTree.get(state.remoteOwnerMap, Nat.compare, tokenId)) {
               case (?#remote(details)) {
-                // For non-Solana chains, return the contract address
-                results.add(?details.contract.contract);
+                // For non-Solana chains, construct RemoteAddressInfo from remote owner details
+                results.add(?{
+                  contract = details.contract.contract;
+                  network = details.contract.network;
+                  atRestDerivation = null; // No derivation stored for old entries
+                  atRestAccount = null; // No account stored for old entries
+                  altAddress = null;
+                });
               };
               case (_) {
                 results.add(null);
@@ -954,15 +1008,17 @@ module {
     };
 
     /// Update remote address for a token
-    /// Called by orchestrator when a Solana NFT mint is completed
-    /// Stores the mint address for later retrieval via icrc99_get_remote_addresses
-    public func update_nft_remote_address(caller: Principal, tokenId: Nat, remoteAddress: Text) : {#ok: (); #err: Text} {
+    /// Called by orchestrator when a Solana NFT mint is completed OR when it's burned back to IC
+    /// Stores the complete remote address info including derivation path and controlling account for later retrieval
+    public func update_nft_remote_address(caller: Principal, tokenId: Nat, remoteAddress: Text, network: MigrationTypes.Network, derivationPath: Blob, atRestAccount: ?Service.Account, altAddress: ?Text) : {#ok: (); #err: Text} {
       // Only the orchestrator should be able to call this
       if (caller != state.orchestrator) {
         return #err("Only orchestrator can update remote addresses");
       };
+
+      debug if(debug_channel.announce) D.print(debug_show(("update_nft_remote_address", caller, tokenId, remoteAddress,network, derivationPath, atRestAccount))); 
       
-      // Convert base58 Solana address to Nat using BaseX decoder
+      // Convert base58 Solana address to Nat for reverse lookup
       let bytesResult = BaseX.fromBase58(remoteAddress);
       let addressNat = switch(bytesResult) {
         case(#ok(bytes)) {
@@ -978,8 +1034,18 @@ module {
         };
       };
       
+      // Create RemoteAddressInfo with all details
+      let addressInfo : MigrationTypes.RemoteAddressInfo = {
+        contract = remoteAddress;
+        network = network;
+        atRestDerivation = ?derivationPath;
+        atRestAccount = atRestAccount;  // Store the account that controls the approval address
+        altAddress = altAddress;
+      };
+
+      
       // Store both forward and reverse mappings
-      ignore BTree.insert(state.solanaMintAddressMap, Nat.compare, tokenId, addressNat);
+      ignore BTree.insert(state.solanaMintAddressMap, Nat.compare, tokenId, addressInfo);
       ignore BTree.insert(state.solanaMintReverseMap, Nat.compare, addressNat, tokenId);
       
       return #ok(());
